@@ -1,0 +1,50 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - redis
+    volumes:
+      - csm-data:/app/data
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    command: ["python", "-m", "rq", "worker", "csm-jobs", "--url", "redis://redis:6379/0"]
+    depends_on:
+      - redis
+    volumes:
+      - csm-data:/app/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  csm-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

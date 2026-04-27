@@ -1,0 +1,13 @@
+{
+    email ops@example.com
+}
+
+csm.{$PUBLIC_HOST} {
+    encode zstd gzip
+    reverse_proxy api:8000
+
+    # Block direct admin paths from the public internet — admin is reached
+    # over Tailscale at <tailnet-ip>:8000.
+    @admin path /admin/*
+    respond @admin "not found" 404
+}
