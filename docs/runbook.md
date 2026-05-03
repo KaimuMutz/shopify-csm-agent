@@ -14,11 +14,11 @@ ssh root@<vps-ip>
 # OS basics
 apt update && apt -y upgrade
 apt -y install git curl ufw fail2ban
-useradd -m -s /bin/bash -G sudo eric
-mkdir -p /home/eric/.ssh
-cp ~/.ssh/authorized_keys /home/eric/.ssh/
-chown -R eric:eric /home/eric/.ssh
-chmod 700 /home/eric/.ssh && chmod 600 /home/eric/.ssh/authorized_keys
+useradd -m -s /bin/bash -G sudo deploy
+mkdir -p /home/deploy/.ssh
+cp ~/.ssh/authorized_keys /home/deploy/.ssh/
+chown -R deploy:deploy /home/deploy/.ssh
+chmod 700 /home/deploy/.ssh && chmod 600 /home/deploy/.ssh/authorized_keys
 
 # Lock SSH
 sed -i 's/^#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
@@ -41,7 +41,7 @@ tailscale up --ssh --hostname=csm-$(hostname)
 # Bookmark the URL it prints to authorise the node in your tailnet.
 ```
 
-After this, `ssh eric@csm-<host>` works from any of your tailnet machines
+After this, `ssh deploy@csm-<host>` works from any of your tailnet machines
 without exposing port 22 publicly. Long term, close port 22 in `ufw` and
 rely on Tailscale SSH only.
 
@@ -49,14 +49,14 @@ rely on Tailscale SSH only.
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-usermod -aG docker eric
+usermod -aG docker deploy
 ```
 
 ## 4. App deploy
 
 ```bash
-sudo -iu eric
-git clone https://github.com/<your-handle>/shopify-csm-agent.git
+sudo -iu deploy
+git clone git@github.com:KaimuMutz/shopify-csm-agent.git
 cd shopify-csm-agent
 
 cp .env.example .env

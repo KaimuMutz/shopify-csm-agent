@@ -79,37 +79,28 @@ between Anthropic, OpenAI, or a self-hosted model.
 shopify-csm-agent/
 ├── src/
 │   ├── agent/
-│   │   ├── graph.py           # LangGraph state machine
-│   │   ├── nodes.py           # classify / gather / draft / decide
-│   │   ├── prompts.py         # system + intent prompts
-│   │   └── confidence.py      # confidence scoring + risk gating
+│   │   ├── graph.py           # LangGraph state machine + node functions
+│   │   ├── llm.py             # provider-agnostic LLM adapter
+│   │   └── prompts.py         # system prompts for classify, draft, self-grade
 │   ├── tools/
-│   │   ├── shopify.py         # Admin API wrapper
-│   │   ├── slack.py           # Slack post + interactive callback
-│   │   └── kb.py              # FAQ retrieval (sqlite-vss)
+│   │   ├── shopify.py         # Admin API wrapper (httpx + retry/back-off)
+│   │   └── slack.py           # Block Kit review-card poster
 │   ├── api/
-│   │   ├── main.py            # FastAPI app
-│   │   ├── webhooks.py        # Shopify webhook handlers
-│   │   └── slack_callback.py  # approval / rejection callback
-│   ├── store/
-│   │   ├── conversations.py   # conversation persistence
-│   │   └── models.py          # SQLAlchemy models
+│   │   ├── main.py            # FastAPI app + lifespan-managed graph deps
+│   │   └── webhooks.py        # Shopify webhook handler with HMAC verify
 │   └── settings.py            # pydantic settings
 ├── tests/
-│   ├── test_agent_graph.py
-│   ├── test_shopify_tool.py
-│   └── fixtures/
+│   └── test_agent_graph.py    # unit tests for the decision branches
 ├── deploy/
-│   ├── docker-compose.yml
+│   ├── docker-compose.yml     # api / worker / redis / caddy
 │   ├── Dockerfile
-│   ├── Caddyfile
-│   └── systemd/csm-agent.service
+│   └── Caddyfile
 ├── docs/
-│   ├── architecture.md
-│   ├── runbook.md
-│   └── client_onboarding.md
+│   ├── runbook.md             # VPS deploy and ops
+│   └── client_onboarding.md   # per-client setup checklist
 ├── .env.example
 ├── pyproject.toml
+├── push.sh
 └── README.md
 ```
 
@@ -118,7 +109,7 @@ shopify-csm-agent/
 ## Quick start (local)
 
 ```bash
-git clone https://github.com/<your-handle>/shopify-csm-agent.git
+git clone git@github.com:KaimuMutz/shopify-csm-agent.git
 cd shopify-csm-agent
 
 cp .env.example .env
@@ -155,8 +146,10 @@ The full runbook lives in `docs/runbook.md`. The short version:
 3. `docker compose -f deploy/docker-compose.yml up -d`
 4. Point your Shopify webhook to `https://csm.<client>.your-domain/webhooks/shopify`
    (Caddy handles TLS automatically).
-5. Add the `/slack/csm-approve` slash command in Slack and point it at the
-   same host.
+5. In Slack, configure the bot's **Interactive Components** request URL
+   to point at `https://csm.<your-domain>/slack/callback` so Approve /
+   Edit / Reject button clicks land back at the agent (handler is on
+   the roadmap; buttons render today).
 
 Each client store gets its own row in the `clients` table — credentials,
 Slack channel, auto-reply confidence threshold, and tone of voice are all
@@ -172,19 +165,23 @@ per-client. One deployment, many stores.
   escalated.
 - **Risk gate.** Refunds, address changes, and any reply mentioning a
   monetary value are escalated regardless of confidence.
-- **Audit trail.** Every conversation, tool call, prompt, and decision is
-  persisted. The `/admin/conversations/<id>` endpoint reconstructs the full
-  trace for debugging and client transparency.
-- **Cost controls.** Token usage is logged per conversation and per client.
-  Daily caps are enforced; once exceeded, the agent escalates everything to
-  Slack until reset.
+- **Audit trail.** Every conversation gets a UUID; the conversation ID is
+  returned in the HTTP response and emitted with every structured log line,
+  so a customer-reported issue triages back to a specific run. A database-
+  backed `Conversation` model is defined; full persistence and an
+  `/admin/conversations/<id>` debug endpoint are on the roadmap.
+- **Cost controls.** Per-client `DAILY_TOKEN_BUDGET_USD` lives in the
+  client config. Runtime token accumulation and auto-escalation on budget
+  overrun are on the roadmap.
 
 ---
 
 ## Status
 
-Active. Running in production for one pilot store; onboarding two more.
-See `docs/client_onboarding.md` for the per-client setup steps.
+Active development. Validated end-to-end locally against a Shopify
+development store with real Slack and Anthropic API calls. Production
+deployment runbook in `docs/runbook.md`; per-client setup steps in
+`docs/client_onboarding.md`.
 
 ---
 
