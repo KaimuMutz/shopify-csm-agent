@@ -11,6 +11,7 @@ Each node is small, side-effect-isolated, and unit-testable in `tests/`.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict
 
@@ -19,6 +20,28 @@ from langgraph.graph import END, StateGraph
 from src.agent.prompts import CLASSIFY_SYSTEM, DRAFT_SYSTEM, SELF_GRADE_SYSTEM
 from src.tools.shopify import ShopifyClient
 from src.tools.slack import SlackTool
+
+
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
+
+
+def _parse_json_loose(raw: str) -> dict:
+    """Parse JSON from LLM output that may be wrapped in a markdown fence.
+
+    Claude (and most modern instruction-tuned LLMs) often respond with
+    ```json\n{...}\n``` even when asked for strict JSON. Strip the fence
+    if present, then fall back to extracting the first {...} block.
+    """
+    s = raw.strip()
+    fence = _FENCE_RE.match(s)
+    if fence:
+        s = fence.group(1).strip()
+    if not s.startswith("{"):
+        match = _JSON_OBJECT_RE.search(s)
+        if match:
+            s = match.group(0)
+    return json.loads(s)
 
 
 Intent = Literal[
@@ -66,7 +89,7 @@ class GraphDeps:
 
 async def classify(state: AgentState, deps: GraphDeps) -> AgentState:
     raw = await deps.llm_complete(CLASSIFY_SYSTEM, state["message"])
-    parsed = json.loads(raw)
+    parsed = _parse_json_loose(raw)
     return {
         **state,
         "intent": parsed["intent"],
@@ -129,7 +152,7 @@ async def self_grade(state: AgentState, deps: GraphDeps) -> AgentState:
         f"Draft reply:\n{state['draft']}"
     )
     raw = await deps.llm_complete(SELF_GRADE_SYSTEM, user_block)
-    return {**state, "self_grade": json.loads(raw)}
+    return {**state, "self_grade": _parse_json_loose(raw)}
 
 
 async def decide(state: AgentState, deps: GraphDeps) -> AgentState:
@@ -184,13 +207,24 @@ async def escalate(state: AgentState, deps: GraphDeps) -> AgentState:
 def build_graph(deps: GraphDeps):
     g = StateGraph(AgentState)
 
-    g.add_node("classify", lambda s: classify(s, deps))
-    g.add_node("gather", lambda s: gather(s, deps))
-    g.add_node("draft", lambda s: draft(s, deps))
-    g.add_node("self_grade", lambda s: self_grade(s, deps))
-    g.add_node("decide", lambda s: decide(s, deps))
-    g.add_node("auto_send", lambda s: auto_send(s, deps))
-    g.add_node("escalate", lambda s: escalate(s, deps))
+    # Wrap each async node in an async closure so LangGraph's
+    # `inspect.iscoroutinefunction` check sees them as async and awaits them.
+    # A sync lambda that calls an async function returns an unawaited coroutine.
+    async def _classify(s: AgentState) -> AgentState: return await classify(s, deps)
+    async def _gather(s: AgentState) -> AgentState: return await gather(s, deps)
+    async def _draft(s: AgentState) -> AgentState: return await draft(s, deps)
+    async def _self_grade(s: AgentState) -> AgentState: return await self_grade(s, deps)
+    async def _decide(s: AgentState) -> AgentState: return await decide(s, deps)
+    async def _auto_send(s: AgentState) -> AgentState: return await auto_send(s, deps)
+    async def _escalate(s: AgentState) -> AgentState: return await escalate(s, deps)
+
+    g.add_node("classify", _classify)
+    g.add_node("gather", _gather)
+    g.add_node("draft", _draft)
+    g.add_node("self_grade", _self_grade)
+    g.add_node("decide", _decide)
+    g.add_node("auto_send", _auto_send)
+    g.add_node("escalate", _escalate)
 
     g.set_entry_point("classify")
     g.add_edge("classify", "gather")
